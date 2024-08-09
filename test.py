@@ -1,17 +1,9 @@
 import pandas as pd
 import requests
 from datetime import datetime
-from configparser import ConfigParser
-
-def get_config():
-    config = ConfigParser()
-    config.read('config.ini')
-    return config
-
-config = get_config()
 
 # Your token here
-token = config['secret']['token']
+token = 'this is my secret'
 
 payload_dname = {
     "filter": {
@@ -43,8 +35,8 @@ class NotionSync:
             response = requests.post(url, json=payload_dname, headers=headers)
 
             if response.status_code != 200:
-                return 'Error: ' + str(response.status_code)
-                exit(0)
+                print(f'Error: {response.status_code}')
+                return None
             else:
                 response_json = response.json()
                 results.extend(response_json["results"])
@@ -56,16 +48,20 @@ class NotionSync:
         return {"results": results}
 
     def notion_db_details(self, database_id, integration_token=token):
-        url = f"https://api.notion.com/v1/databases/" + database_id + "/query"
+        url = f"https://api.notion.com/v1/databases/{database_id}/query"
         response = requests.post(url, headers=headers)
 
         if response.status_code != 200:
-            return 'Error: ' + str(response.status_code)
-            exit(0)
+            print(f'Error: {response.status_code}, {response.text}')
+            return None
         else:
             return response.json()
 
     def get_table_data(self, data_json):
+        if not data_json or "results" not in data_json:
+            print(f'Invalid data_json: {data_json}')
+            return {}
+
         columns = data_json["results"][0]["properties"].keys()
         table_data = {col: [] for col in columns}
 
@@ -103,14 +99,24 @@ if __name__ == '__main__':
     nsync = NotionSync()
 
     # Get habits data from Notion
-    habit_data = nsync.notion_db_details(config['tables']['habits'])
-    habit_table = nsync.get_table_data(habit_data)
-    habits_df = pd.DataFrame.from_dict(habit_table)
+    habit_data = nsync.notion_db_details('habit_id_goes_here')
+    if habit_data:
+        print("Habit data:", habit_data)
+        habit_table = nsync.get_table_data(habit_data)
+        habits_df = pd.DataFrame.from_dict(habit_table)
+    else:
+        print("Failed to retrieve habit data.")
+        habits_df = pd.DataFrame()
 
     # Get daily habit tracker data from Notion
-    daily_habit_data = nsync.notion_db_details(config['tables']['daily_habit_tracker'])
-    daily_habit_table = nsync.get_table_data(daily_habit_data)
-    daily_habit_tracker_df = pd.DataFrame.from_dict(daily_habit_table)
+    daily_habit_data = nsync.notion_db_details('daily_habit_id_goes_here')
+    if daily_habit_data:
+        print("Daily habit tracker data:", daily_habit_data)
+        daily_habit_table = nsync.get_table_data(daily_habit_data)
+        daily_habit_tracker_df = pd.DataFrame.from_dict(daily_habit_table)
+    else:
+        print("Failed to retrieve daily habit tracker data.")
+        daily_habit_tracker_df = pd.DataFrame()
 
     # Load the calendar CSV file
     calendar_df = pd.read_csv('calendar.csv')
