@@ -274,7 +274,8 @@ if __name__=='__main__':
                         'extra': 0,
                         'active': True
                     }
-                    streaks_df = streaks_df._append(new_streak, ignore_index=True)
+                    new_streak_df = pd.DataFrame([new_streak])
+                    streaks_df = pd.concat([streaks_df, new_streak_df], ignore_index=True)
                     streak_id += 1
             else:  # Habit not completed
                 if not active_streak.empty:
