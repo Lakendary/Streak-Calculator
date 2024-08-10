@@ -2,6 +2,8 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from configparser import ConfigParser
+import numpy as np
+
 
 def get_config():
     config = ConfigParser()
@@ -168,6 +170,23 @@ class NotionSync:
 
         return table_data    
 
+def fill_missing_habit_data(daily_habit_tracker_df, habits_df):
+    # Iterate over each habit (column) in the habits_df
+    for habit in habits_df['Short Name']:
+        # Check if the habit exists in the daily_habit_tracker_df
+        if habit in daily_habit_tracker_df.columns:
+            # Retrieve the corresponding 'Check' value for the habit
+            check_property = habits_df.loc[habits_df['Short Name'] == habit, 'Check'].values[0]
+            
+            # Replace NaN values and empty strings based on the 'Check' value
+            if check_property == 'Check':
+                daily_habit_tracker_df[habit] = daily_habit_tracker_df[habit].replace(['', None], np.nan).fillna(False)
+            elif check_property == 'Value':
+                daily_habit_tracker_df[habit] = daily_habit_tracker_df[habit].replace(['', None], np.nan).fillna(0)
+        else:
+            print(f"Warning: Habit '{habit}' not found in daily_habit_tracker_df. Skipping.")
+    
+    return daily_habit_tracker_df
 
 if __name__=='__main__':
     nsync = NotionSync()
@@ -219,9 +238,32 @@ if __name__=='__main__':
     daily_habit_tracker_df['Date'] = pd.to_datetime(daily_habit_tracker_df['Date'])
     calendar_df['date'] = pd.to_datetime(calendar_df['date'])
 
+    # Rename 'date' column in calendar_df to 'Date' for merging purposes
+    calendar_df = calendar_df.rename(columns={'date': 'Date'})
+
+    # Merge the two dataframes on 'Date', ensuring all dates from calendar_df are included
+    merged_df = pd.merge(calendar_df, daily_habit_tracker_df, on='Date', how='left')
+
+    # Drop calendar-specific columns from the merged dataframe if they are not needed
+    columns_to_drop = [col for col in calendar_df.columns if col != 'Date']
+    merged_df = merged_df.drop(columns=columns_to_drop)
+
+    # Sort the merged dataframe by 'Date'
+    merged_df = merged_df.sort_values(by='Date')
+
+    # Replace daily_habit_tracker_df with the newly merged dataframe
+    daily_habit_tracker_df = merged_df
+
+    # Replace NaN values with False or zero depending on check property
+    daily_habit_tracker_df = fill_missing_habit_data(daily_habit_tracker_df, habits_df)
+
+    # Rename 'Date' column in calendar_df to 'date' after merge is done
+    calendar_df = calendar_df.rename(columns={'Date': 'date'})
+
     # Sort the daily habit tracker by date
-    daily_habit_tracker_df = daily_habit_tracker_df.sort_values(by='Date')
+    #daily_habit_tracker_df = daily_habit_tracker_df.sort_values(by='Date')
     print("Number of rows in the daily habit tracker data frame: ", len(daily_habit_tracker_df))
+    
     # Initialize the streaks dataframe
     streaks_df = pd.DataFrame(columns=['id', 'name', 'start_date', 'end_date', 'streak_count', 'extra', 'active'])
     streak_id = 1
@@ -233,6 +275,9 @@ if __name__=='__main__':
     # Helper function to get the week number
     def get_week_number(date):
         return calendar_df.loc[calendar_df['date'] == date, 'week_number'].values[0]
+    
+    # Export Daily Habit Tracker data frame before calculating streak
+    daily_habit_tracker_df.to_csv('dht.csv')
 
     # Process each date in the daily habit tracker
     for index, row in daily_habit_tracker_df.iterrows():
@@ -277,7 +322,7 @@ if __name__=='__main__':
                     new_streak_df = pd.DataFrame([new_streak])
                     streaks_df = pd.concat([streaks_df, new_streak_df], ignore_index=True)
                     streak_id += 1
-            else:  # Habit not completed
+            elif habit_done == False or pd.isna(habit_done):  # Habit not completed or is NaN/empty
                 if not active_streak.empty:
                     active_streak_index = active_streak.index[0]
                     if habit_freq == 'Daily':
