@@ -22,18 +22,15 @@ payload_dname = {
     "page_size": 100
 }
 
-
 headers = {
     "Authorization": "Bearer " + token,
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json"
 }
 
-
 class NotionSync:
     def __init__(self):
         pass
-
 
     # search database name
     def  notion_search(self,integration_token = token):
@@ -59,7 +56,6 @@ class NotionSync:
                 break
 
         return {"results": results}
-
 
     # query database details
     def notion_db_details(self, database_id, integration_token=token):
@@ -88,7 +84,6 @@ class NotionSync:
 
         return {"results": results}
 
-
     # to get databases id and name
     def get_databases(self,data_json):
         databaseinfo = {}
@@ -105,7 +100,6 @@ class NotionSync:
                                          else ""
                                          for i in range(len(data_json["results"])) ]
         return databaseinfo
-
 
     # to get column title of the table
     def get_tablecol_titles(self,data_json):
@@ -227,7 +221,6 @@ if __name__=='__main__':
             elif d == config['tables']['habits']:
                 habits_df = pd.DataFrame.from_dict(table_data)
 
-    
     # Columns to drop
     columns_to_drop = ['Available Balance', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
     daily_habit_tracker_df = daily_habit_tracker_df.drop(columns=columns_to_drop)
