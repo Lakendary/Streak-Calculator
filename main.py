@@ -1,7 +1,8 @@
-import pandas as pd
 import requests
-from datetime import datetime
+import pandas as pd
+from datetime import datetime, timedelta
 from configparser import ConfigParser
+import numpy as np
 
 def get_config():
     config = ConfigParser()
@@ -10,7 +11,6 @@ def get_config():
 
 config = get_config()
 
-# Your token here
 token = config['secret']['token']
 
 payload_dname = {
@@ -31,7 +31,8 @@ class NotionSync:
     def __init__(self):
         pass
 
-    def notion_search(self, integration_token=token):
+    # search database name
+    def  notion_search(self,integration_token = token):
         url = "https://api.notion.com/v1/search"
         results = []
         next_cursor = None
@@ -55,80 +56,213 @@ class NotionSync:
 
         return {"results": results}
 
+    # query database details
     def notion_db_details(self, database_id, integration_token=token):
-        url = f"https://api.notion.com/v1/databases/" + database_id + "/query"
-        response = requests.post(url, headers=headers)
+        url = f"https://api.notion.com/v1/databases/{database_id}/query"
+        results = []
+        next_cursor = None
 
-        if response.status_code != 200:
-            return 'Error: ' + str(response.status_code)
-            exit(0)
+        while True:
+            if next_cursor:
+                payload = {"start_cursor": next_cursor}
+            else:
+                payload = {}
+
+            response = requests.post(url, json=payload, headers=headers)
+
+            if response.status_code != 200:
+                return 'Error: ' + str(response.status_code)
+                exit(0)
+            else:
+                response_json = response.json()
+                results.extend(response_json["results"])
+                next_cursor = response_json.get("next_cursor")
+
+            if not next_cursor:
+                break
+
+        return {"results": results}
+
+    # to get databases id and name
+    def get_databases(self,data_json):
+        databaseinfo = {}
+        databaseinfo["database_id"] = [data_json["results"][i]["id"].replace("-","")
+                                                for i in range(len(data_json["results"])) ]
+
+        databaseinfo["database_name"] = [data_json["results"][i]["title"][0]["plain_text"]
+                                                  if data_json["results"][i]["title"]
+                                                  else ""
+                                                  for i in range(len(data_json["results"])) ]
+
+        databaseinfo["url"] = [ data_json["results"][i]["url"]
+                                         if data_json["results"][i]["url"]
+                                         else ""
+                                         for i in range(len(data_json["results"])) ]
+        return databaseinfo
+
+    # to get column title of the table
+    def get_tablecol_titles(self,data_json):
+        return list(data_json["results"][0]["properties"].keys())
+    
+    # to get column data type for processing by type due to data structure is different by column type
+    def get_tablecol_type(self,data_json,columns_title):
+        type_data = {}
+        for t in columns_title:
+            type_data[t] = data_json["results"][0]["properties"][t]["type"]
+        return type_data
+
+    # to get table data by column type
+    def get_table_data(self,data_json,columns_type):
+        table_data = {}
+        for k, v in columns_type.items():
+            # to check column type and process by type
+            if v in ["checkbox","number","email","phone_number"]:
+                table_data[k] = [ data_json["results"][i]["properties"][k][v]
+                                    if data_json["results"][i]["properties"][k][v]
+                                    else ""
+                                    for i in range(len(data_json["results"]))]
+            elif v == "date":
+                table_data[k] = [ data_json["results"][i]["properties"][k]["date"]["start"]
+                                    if data_json["results"][i]["properties"][k]["date"]
+                                    else ""
+                                    for i in range(len(data_json["results"])) ]
+            elif v == "rich_text" or v == 'title':
+                table_data[k] = [ data_json["results"][i]["properties"][k][v][0]["plain_text"]
+                                    if data_json["results"][i]["properties"][k][v]
+                                    else ""
+                                    for i in range(len(data_json["results"])) ]
+            elif v == "files":
+                table_data[k + "_FileName"] = [ data_json["results"][i]["properties"][k][v][0]["name"]
+                                                if data_json["results"][i]["properties"][k][v]
+                                                else ""
+                                                for i in range(len(data_json["results"])) ]
+                table_data[k + "_FileUrl"] = [ data_json["results"][i]["properties"][k][v][0]["file"]["url"]
+                                           if data_json["results"][i]["properties"][k][v]
+                                                else ""
+                                           for i in range(len(data_json["results"])) ]
+            elif v == "select":
+                table_data[k] = [data_json["results"][i]["properties"][k][v]["name"]
+                                    if data_json["results"][i]["properties"][k][v]
+                                    else ""
+                                    for i in range(len(data_json["results"]))]
+            elif v == "people":
+                table_data[k + "_Name"] = [ [data_json["results"][i]["properties"][k][v][j]["name"]
+                                                if data_json["results"][i]["properties"][k][v]
+                                                # to check if key 'name' exists in the list
+                                                and "name" in data_json["results"][i]["properties"][k][v][j].keys()
+                                                else ""
+                                                for j in range(len(data_json["results"][i]["properties"][k][v]))]
+                                                for i in range(len(data_json["results"])) ]
+            elif v == "multi_select":
+                table_data[k] = [ [data_json["results"][i]["properties"][k][v][j]["name"]
+                                  if data_json["results"][i]["properties"][k][v]
+                                  else ""
+                                  for j in range(len(data_json["results"][i]["properties"][k][v]))]
+                                  for i in range(len(data_json["results"])) 
+                                ]
+
+        return table_data    
+
+def fill_missing_habit_data(daily_habit_tracker_df, habits_df):
+    # Iterate over each habit (column) in the habits_df
+    for habit in habits_df['Short Name']:
+        # Check if the habit exists in the daily_habit_tracker_df
+        if habit in daily_habit_tracker_df.columns:
+            # Retrieve the corresponding 'Check' value for the habit
+            check_property = habits_df.loc[habits_df['Short Name'] == habit, 'Check'].values[0]
+            
+            # Replace NaN values and empty strings based on the 'Check' value
+            if check_property == 'Check':
+                daily_habit_tracker_df[habit] = daily_habit_tracker_df[habit].replace(['', None], np.nan).fillna(False)
+            elif check_property == 'Value':
+                daily_habit_tracker_df[habit] = daily_habit_tracker_df[habit].replace(['', None], np.nan).fillna(0)
         else:
-            return response.json()
+            print(f"Warning: Habit '{habit}' not found in daily_habit_tracker_df. Skipping.")
+    
+    return daily_habit_tracker_df
 
-    def get_table_data(self, data_json):
-        columns = data_json["results"][0]["properties"].keys()
-        table_data = {col: [] for col in columns}
-
-        for row in data_json["results"]:
-            for col in columns:
-                cell = row["properties"][col]
-                if cell["type"] == "title":
-                    table_data[col].append(cell["title"][0]["plain_text"] if cell["title"] else "")
-                elif cell["type"] == "rich_text":
-                    table_data[col].append(cell["rich_text"][0]["plain_text"] if cell["rich_text"] else "")
-                elif cell["type"] == "checkbox":
-                    table_data[col].append(cell["checkbox"])
-                elif cell["type"] == "number":
-                    table_data[col].append(cell["number"])
-                elif cell["type"] == "date":
-                    table_data[col].append(cell["date"]["start"] if cell["date"] else "")
-                elif cell["type"] == "select":
-                    table_data[col].append(cell["select"]["name"] if cell["select"] else "")
-                elif cell["type"] == "multi_select":
-                    table_data[col].append(", ".join([opt["name"] for opt in cell["multi_select"]]))
-                elif cell["type"] == "people":
-                    table_data[col].append(", ".join([person["name"] for person in cell["people"]]))
-                elif cell["type"] == "email":
-                    table_data[col].append(cell["email"])
-                elif cell["type"] == "phone_number":
-                    table_data[col].append(cell["phone_number"])
-                elif cell["type"] == "url":
-                    table_data[col].append(cell["url"])
-                else:
-                    table_data[col].append(None)
-
-        return table_data
-
-if __name__ == '__main__':
+if __name__=='__main__':
     nsync = NotionSync()
 
-    # Get habits data from Notion
-    habit_data = nsync.notion_db_details(config['tables']['habits'])
-    habit_table = nsync.get_table_data(habit_data)
-    habits_df = pd.DataFrame.from_dict(habit_table)
+    # to search all databases.
+    data = nsync.notion_search()
 
-    # Get daily habit tracker data from Notion
-    daily_habit_data = nsync.notion_db_details(config['tables']['daily_habit_tracker'])
-    daily_habit_table = nsync.get_table_data(daily_habit_data)
-    daily_habit_tracker_df = pd.DataFrame.from_dict(daily_habit_table)
+    # to get database id and name.
+    dbid_name = nsync.get_databases(data)
 
-    # Load the calendar CSV file
-    calendar_df = pd.read_csv('calendar.csv')
+    #convert dictionary to dataframe.
+    df = pd.DataFrame.from_dict(dbid_name)
+
+    # convert to bool and then drop record with empty databasae name.
+    df = df[df['database_name'].astype(bool)]
+    
+    # required dataframes for streaks
+    daily_habit_tracker_df = pd.DataFrame()
+    habits_df = pd.DataFrame()
+
+    # to loop through database id and get the database details.
+    for d in dbid_name["database_id"]:
+        
+        if d == config['tables']['daily_habit_tracker'] or d == config['tables']['habits']:
+            # notion given another API to get the details of databases by database id. search API does not return databases details.
+            dbdetails = nsync.notion_db_details(d)
+            # get column title
+            columns_title = nsync.get_tablecol_titles(dbdetails)
+
+            # get column type
+            columns_type = nsync.get_tablecol_type(dbdetails,columns_title)
+
+            # get table data
+            table_data = nsync.get_table_data(dbdetails,columns_type)
+            
+            if d == config['tables']['daily_habit_tracker']:
+                daily_habit_tracker_df = pd.DataFrame.from_dict(table_data)
+            elif d == config['tables']['habits']:
+                habits_df = pd.DataFrame.from_dict(table_data)
+
+    # Columns to drop
+    columns_to_drop = ['Available Balance', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
+    daily_habit_tracker_df = daily_habit_tracker_df.drop(columns=columns_to_drop)
+    
+    calendar_df = pd.read_csv(config['resources']['calendar_file'])
 
     # Convert date columns to datetime
-    daily_habit_tracker_df['date'] = pd.to_datetime(daily_habit_tracker_df['date'])
+    daily_habit_tracker_df['Date'] = pd.to_datetime(daily_habit_tracker_df['Date'])
     calendar_df['date'] = pd.to_datetime(calendar_df['date'])
 
-    # Sort the daily habit tracker by date
-    daily_habit_tracker_df = daily_habit_tracker_df.sort_values(by='date')
+    # Rename 'date' column in calendar_df to 'Date' for merging purposes
+    calendar_df = calendar_df.rename(columns={'date': 'Date'})
 
+    # Merge the two dataframes on 'Date', ensuring all dates from calendar_df are included
+    merged_df = pd.merge(calendar_df, daily_habit_tracker_df, on='Date', how='left')
+
+    # Drop calendar-specific columns from the merged dataframe if they are not needed
+    columns_to_drop = [col for col in calendar_df.columns if col != 'Date']
+    merged_df = merged_df.drop(columns=columns_to_drop)
+
+    # Sort the merged dataframe by 'Date'
+    merged_df = merged_df.sort_values(by='Date')
+
+    # Replace daily_habit_tracker_df with the newly merged dataframe
+    daily_habit_tracker_df = merged_df
+
+    # Replace NaN values with False or zero depending on check property
+    daily_habit_tracker_df = fill_missing_habit_data(daily_habit_tracker_df, habits_df)
+
+    # Rename 'Date' column in calendar_df to 'date' after merge is done
+    calendar_df = calendar_df.rename(columns={'Date': 'date'})
+
+    # Sort the daily habit tracker by date
+    #daily_habit_tracker_df = daily_habit_tracker_df.sort_values(by='Date')
+    print("Number of rows in the daily habit tracker data frame: ", len(daily_habit_tracker_df))
+    
     # Initialize the streaks dataframe
     streaks_df = pd.DataFrame(columns=['id', 'name', 'start_date', 'end_date', 'streak_count', 'extra', 'active'])
     streak_id = 1
 
     # Helper function to get the day of the week
     def get_day_of_week(date):
-        return calendar_df.loc[calendar_df['date'] == date, 'day_of_week'].values[0]
+        return calendar_df.loc[calendar_df['date'] == date, 'day_of_week_name'].values[0]
 
     # Helper function to get the week number
     def get_week_number(date):
@@ -136,10 +270,10 @@ if __name__ == '__main__':
 
     # Process each date in the daily habit tracker
     for index, row in daily_habit_tracker_df.iterrows():
-        current_date = row['date']
-        for habit in habits_df['name']:
-            habit_freq = habits_df.loc[habits_df['name'] == habit, 'frequency'].values[0]
-            habit_done = row[habit]
+        current_date = row['Date']
+        for habit in habits_df['Short Name']:
+            habit_freq = habits_df.loc[habits_df['Short Name'] == habit, 'Frequency'].values[0]
+            habit_done = row.get(habit, None)  # Use .get() to handle missing columns
             
             # Check for active streak
             active_streak = streaks_df[(streaks_df['name'] == habit) & (streaks_df['active'] == True)]
@@ -147,16 +281,16 @@ if __name__ == '__main__':
             if habit_done:  # Habit completed
                 if not active_streak.empty:
                     active_streak_index = active_streak.index[0]
-                    if habit_freq == 'daily':
+                    if habit_freq == 'Daily':
                         streaks_df.at[active_streak_index, 'streak_count'] += 1
                         streaks_df.at[active_streak_index, 'end_date'] = current_date
-                    elif habit_freq == 'weekdays':
+                    elif habit_freq == 'Weekdays':
                         if get_day_of_week(current_date) in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
                             streaks_df.at[active_streak_index, 'streak_count'] += 1
                             streaks_df.at[active_streak_index, 'end_date'] = current_date
                         else:
                             streaks_df.at[active_streak_index, 'extra'] += 1
-                    elif habit_freq == 'weekly':
+                    elif habit_freq == 'Weekly':
                         streak_end_week = get_week_number(streaks_df.at[active_streak_index, 'end_date'])
                         current_week = get_week_number(current_date)
                         if current_week == streak_end_week:
@@ -174,21 +308,22 @@ if __name__ == '__main__':
                         'extra': 0,
                         'active': True
                     }
-                    streaks_df = streaks_df._append(new_streak, ignore_index=True)
+                    new_streak_df = pd.DataFrame([new_streak])
+                    streaks_df = pd.concat([streaks_df, new_streak_df], ignore_index=True)
                     streak_id += 1
-            else:  # Habit not completed
+            elif habit_done == False or pd.isna(habit_done):  # Habit not completed or is NaN/empty
                 if not active_streak.empty:
                     active_streak_index = active_streak.index[0]
-                    if habit_freq == 'daily':
+                    if habit_freq == 'Daily':
                         streaks_df.at[active_streak_index, 'active'] = False
-                    elif habit_freq == 'weekdays':
+                    elif habit_freq == 'Weekdays':
                         if get_day_of_week(current_date) in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
                             streaks_df.at[active_streak_index, 'active'] = False
-                    elif habit_freq == 'weekly':
+                    elif habit_freq == 'Weekly':
                         streak_end_week = get_week_number(streaks_df.at[active_streak_index, 'end_date'])
                         current_week = get_week_number(current_date)
                         if current_week >= streak_end_week + 2:
                             streaks_df.at[active_streak_index, 'active'] = False
 
     # Save the streaks dataframe to a CSV file
-    streaks_df.to_csv('streaks.csv', index=False)
+    streaks_df.to_csv(config['resources']['streaks_file'], index=False)
