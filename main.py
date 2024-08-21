@@ -299,13 +299,21 @@ if __name__=='__main__':
                             streaks_df.at[active_streak_index, 'streak_count'] += 1
                             streaks_df.at[active_streak_index, 'end_date'] = current_date
                 else:
+                    streak_count = 1
+                    extra_count = 0
+
+                    if habit_freq == 'Weekdays':
+                        if get_day_of_week(current_date) in ['Saturday', 'Sunday']:
+                            streak_count = 0
+                            extra_count = 1
+
                     new_streak = {
                         'id': streak_id,
                         'name': habit,
                         'start_date': current_date,
                         'end_date': current_date,
-                        'streak_count': 1,
-                        'extra': 0,
+                        'streak_count': streak_count,
+                        'extra': extra_count,
                         'active': True
                     }
                     new_streak_df = pd.DataFrame([new_streak])
