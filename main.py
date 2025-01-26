@@ -199,6 +199,10 @@ if __name__=='__main__':
     # required dataframes for streaks
     daily_habit_tracker_df = pd.DataFrame()
     habits_df = pd.DataFrame()
+    
+    # required dataframes for streaks when testing
+    # daily_habit_tracker_df = pd.read_csv(config['resources']['daily_habit_tracker_file'])
+    # habits_df = pd.read_csv(config['resources']['habits_file'])
 
     # to loop through database id and get the database details.
     for d in dbid_name["database_id"]:
@@ -221,7 +225,7 @@ if __name__=='__main__':
                 habits_df = pd.DataFrame.from_dict(table_data)
 
     # Columns to drop
-    columns_to_drop = ['Available Balance', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
+    columns_to_drop = ['CC Balance', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
     daily_habit_tracker_df = daily_habit_tracker_df.drop(columns=columns_to_drop)
     
     calendar_df = pd.read_csv(config['resources']['calendar_file'])
@@ -252,9 +256,10 @@ if __name__=='__main__':
     # Rename 'Date' column in calendar_df to 'date' after merge is done
     calendar_df = calendar_df.rename(columns={'Date': 'date'})
 
-    # Sort the daily habit tracker by date
-    #daily_habit_tracker_df = daily_habit_tracker_df.sort_values(by='Date')
-    print("Number of rows in the daily habit tracker data frame: ", len(daily_habit_tracker_df))
+    # Filter daily habit tracker dataframe to only have rows from 2025 onwards
+    print("Number of rows in the daily habit tracker data frame before filter: ", len(daily_habit_tracker_df))
+    daily_habit_tracker_df = daily_habit_tracker_df[daily_habit_tracker_df['Date'] >= '2025-01-01']
+    print("Number of rows in the daily habit tracker data frame after filter: ", len(daily_habit_tracker_df))
     
     # Initialize the streaks dataframe
     streaks_df = pd.DataFrame(columns=['id', 'name', 'start_date', 'end_date', 'streak_count', 'extra', 'active'])
@@ -268,6 +273,17 @@ if __name__=='__main__':
     def get_week_number(date):
         return calendar_df.loc[calendar_df['date'] == date, 'week_number'].values[0]
 
+    # Helper function to get the number of days left in the week
+    def days_left_in_week(calendar_df, current_week_num, current_date):
+        # Filter the calendar_df to get the dates in the current week
+        current_week_dates = calendar_df[calendar_df['week_number'] == current_week_num]
+        
+        # Filter out dates that are before the current_date
+        remaining_dates = current_week_dates[current_week_dates['date'] > current_date]
+        
+        # Return the number of remaining dates
+        return len(remaining_dates)
+    
     # Process each date in the daily habit tracker
     for index, row in daily_habit_tracker_df.iterrows():
         current_date = row['Date']
@@ -279,7 +295,7 @@ if __name__=='__main__':
             active_streak = streaks_df[(streaks_df['name'] == habit) & (streaks_df['active'] == True)]
             
             if habit_done:  # Habit completed
-                if not active_streak.empty:
+                if not active_streak.empty: # Active streak exists
                     active_streak_index = active_streak.index[0]
                     if habit_freq == 'Daily':
                         streaks_df.at[active_streak_index, 'streak_count'] += 1
@@ -298,7 +314,21 @@ if __name__=='__main__':
                         elif current_week == streak_end_week + 1:
                             streaks_df.at[active_streak_index, 'streak_count'] += 1
                             streaks_df.at[active_streak_index, 'end_date'] = current_date
-                else:
+                    elif habit_freq == '3x-a-Week':
+                        current_week_num = get_week_number(current_date)
+                        streak_end_week_num = get_week_number(streaks_df.at[active_streak_index, 'end_date'])
+                        streak_start_week_num = get_week_number(streaks_df.at[active_streak_index, 'start_date'])
+                        streak_count = streaks_df.at[active_streak_index, 'streak_count']
+                        
+                        target_count = ((current_week_num - streak_start_week_num) + 1 ) * 3
+                        if streak_count < target_count:
+                            streaks_df.at[active_streak_index, 'streak_count'] += 1
+                            streaks_df.at[active_streak_index, 'end_date'] = current_date
+                        elif streak_count == target_count:
+                            streaks_df.at[active_streak_index, 'extra'] += 1
+                        
+                        
+                else: # No active streak exists
                     streak_count = 1
                     extra_count = 0
 
@@ -320,7 +350,7 @@ if __name__=='__main__':
                     streaks_df = pd.concat([streaks_df, new_streak_df], ignore_index=True)
                     streak_id += 1
             elif habit_done == False or pd.isna(habit_done):  # Habit not completed or is NaN/empty
-                if not active_streak.empty:
+                if not active_streak.empty: # Active streak exists
                     active_streak_index = active_streak.index[0]
                     if habit_freq == 'Daily':
                         streaks_df.at[active_streak_index, 'active'] = False
@@ -332,6 +362,17 @@ if __name__=='__main__':
                         current_week = get_week_number(current_date)
                         if current_week >= streak_end_week + 2:
                             streaks_df.at[active_streak_index, 'active'] = False
+                    elif habit_freq == '3x-a-Week':
+                        current_week_num = get_week_number(current_date)
+                        streak_end_week_num = get_week_number(streaks_df.at[active_streak_index, 'end_date'])
+                        streak_start_week_num = get_week_number(streaks_df.at[active_streak_index, 'start_date'])
+                        streak_count = streaks_df.at[active_streak_index, 'streak_count']
 
+                        target_count = ((current_week_num - streak_start_week_num) + 1 ) * 3
+                        days_left_num = days_left_in_week(calendar_df, current_week_num, current_date)
+
+                        if streak_count + days_left_num < target_count:
+                            streaks_df.at[active_streak_index, 'active'] = False
+                        
     # Save the streaks dataframe to a CSV file
     streaks_df.to_csv(config['resources']['streaks_file'], index=False)
