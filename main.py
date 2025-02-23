@@ -225,7 +225,7 @@ if __name__=='__main__':
                 habits_df = pd.DataFrame.from_dict(table_data)
 
     # Columns to drop
-    columns_to_drop = ['CC Balance', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
+    columns_to_drop = ['CC Balance Value', 'Focus Time (Mins)', 'Improvements', 'Lunch Feedback', 'Name', 'Status', 'Trees Died']
     daily_habit_tracker_df = daily_habit_tracker_df.drop(columns=columns_to_drop)
     
     calendar_df = pd.read_csv(config['resources']['calendar_file'])
